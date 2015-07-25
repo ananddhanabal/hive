@@ -1,0 +1,2 @@
+# hive
+HIVE through examples
