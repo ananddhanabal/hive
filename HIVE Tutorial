@@ -1,0 +1,1107 @@
+Apache Hive is a data warehouse system for Hadoop. Hive is not a relational database; it only 
+maintains metadata information about your big data stored on HDFS. 
+Hive allows you to treat your big data as tables and perform SQL-like operations on the 
+data using a scripting language called HiveQL.
+
+1) Hive is not a database, but it uses a database (called the metastore) to store the tables that you define. Hive uses Derby by default
+2) A Hive table consists of a schema stored in the metastore and data stored on HDFS
+3) Hive converts HiveQL commands into MapReduce jobs (similar to how Pig Latin scripts execute with Pig)
+4) One of the key benefits of HiveQL is its similarity to SQL. Data analysts familiar with SQL can run MapReduce jobs by writing SQL-like queries, something they are already comfortable doing
+5) You can easily perform ad hoc custom queries on HDFS using Hive
+
+PIG and Hive
+---------------
+Pig and Hive have quite a few similarities, so you might be wondering which framework to choose for your particular application. For most use cases:
+Pig is a good choice for ETL jobs, where unstructured data is reformatted so that it is easier to define a structure to it
+Hive is a good choice when you want to query data that has a certain known structure to it
+In other words, you will likely benefit from using both Pig and Hive. Pig is great for moving data around and restructuring it, while Hive is great for performing analyses on the data.
+Important
+Hive does not make any promises regarding performance. The benefit of Hive is its simplicity in being able to define and run a MapReduce job, but the queries are not meant to execute in real time. Even the simplest of Hive queries can take several minutes to execute (just like any MapReduce job), and large Hive queries can feasibly take hours to run.
+
+			$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$		
+																	IMPORTANT 
+			$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+Hive does not make any promises regarding performance. The benefit of Hive is its simplicity in being able to define and run a MapReduce job, 
+but the queries are not meant to execute in real time. Even the simplest of Hive queries can take several minutes to execute (just like any MapReduce job), 
+and large Hive queries can feasibly take hours to run.
+************************************************************************************************************************************************************************************** 
+Comparing Hive to SQL
+------------------------
+********* Hive supports standard SQL clauses:
+INSERT INTO
+SELECT
+FROM … JOIN … ON
+WHERE
+GROUP BY
+HAVING
+ORDER BY
+LIMIT
+*********Hive also supports basic DDL commands:
+CREATE/ALTER/DROP TABLE/DATABASE
+*********Some of the limitations of Hive include:
+			1) Index and view support are limited (discussed in detail later)
+			2) The data in Hive is read only (no updates)
+			3) Subqueries are only allowed in a FROM clause
+			4) Datatypes do not line up with traditional SQL types
+			5) Security is limited
+			6) New partitions can be inserted, but not individual rows
+**************************************************************************************************************************************************************************************			
+Submitting Hive Queries
+---------------------------
+1) Hive CLI	The Hive command line interface allows you to enter commands directly into the Hive shell or write the commands in a text file and execute the file
+2) Beeline	A new JDBC client that works with HiveServer2. The Beeline shell works in embedded mode (just like the Hive CLI) and also remote mode, where you connect to a HiveServer2 process using Thrift
+
+The Hive CLI shell is started using the hive executable:
+$ hive -h hostname
+hive>
+Use the -f flag to specify a file that contains a Hive script:
+$ hive -f myquery.hive
+Beeline is started using the beeline executable:
+$ beeline –u url –n username –p password
+beeline>
+**************************************************************************************************************************************************************************************
+Defining a Hive-Managed Table
+--------------------------------
+A Hive table allows you to add structure to your otherwise unstructured data in HDFS. Use the CREATE TABLE command to define a Hive table, similar to creating a table in SQL.
+For example, the following HiveQL creates a new Hive-managed table named customer:
+CREATE TABLE customer (
+customerID INT,
+firstName STRING,
+lastName STRING,
+birthday TIMESTAMP,
+  ) ROW FORMAT DELIMITED FIELDS TERMINATED BY ',';
+
+				The customer table has four columns
+				ROW FORMAT is either DELIMITED or SERDE
+				Hive supports the following data types: TINYINT, SMALLINT, INT, BIGINT, BOOLEAN, FLOAT, DOUBLE, STRING, BINARY , and TIMESTAMP
+				Hive also has four complex data types: ARRAY, MAP, STRUCT , and UNIONTYPE
+**************************************************************************************************************************************************************************************	
+Defining an External Table
+--------------------------------
+An external table is just like a Hive-managed table, except that when the table is dropped, Hive will not delete the underlying
+/apps/hive/warehouse/salaries folder.
+The following CREATE statement creates an external table named salaries:
+CREATE EXTERNAL TABLE salaries (
+   gender string,
+   age int,
+   salary double,
+   zip int
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ',';
+
+*****************************************************************************************************************************************************************************************
+Defining a Table LOCATION
+--------------------------------
+Hive does not have to store the underlying data in /apps/hive/warehouse. Instead, the files for a Hive table can be stored in a folder anywhere in HDFS by defining the LOCATION clause. For example:
+CREATE EXTERNAL TABLE salaries (
+   gender string,
+   age int,
+   salary double,
+   zip int
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+LOCATION '/user/train/salaries/';
+		In the table above, the table data for salaries will be whatever is in the /user/train/salaries directory.
+			$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$		
+																	IMPORTANT 
+			$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+The sole difference in behavior between external tables and Hive-managed tables is when they are dropped. 
+If you drop a Hive-managed table, then its underlying data is deleted from HDFS. If you drop an external table,
+then its underlying data remains in HDFS (even if the LOCATION was in /apps/hive/warehouse/).
+*****************************************************************************************************************************************************************************************
+Loading Data into a Hive Table
+--------------------------------
+The data for a Hive table resides in HDFS. To associate data with a table, use the LOAD DATA command. The data does not actually get “loaded” 
+into anything, but the data does get moved:
+			1) For Hive-managed tables, the data is moved into a special Hive subfolders of /apps/hive/warehouse
+			2) For external tables, the data is moved to the folder specified by the LOCATION clause in the table’s definition
+			
+The LOAD DATA command can load files from the local file system (using the LOCAL qualifier) or files already in HDFS. For example, 
+the following command loads a local file into a table named customers:			
+####################
+OVERWRITE
+####################
+			LOAD DATA LOCAL INPATH '/tmp/customers.csv' OVERWRITE INTO TABLE customers;		
+
+The OVERWRITE option deletes any existing data in the table and replaces it with the new data. If you want to 
+append data to the table’s existing contents, simply leave off the OVERWRITE keyword
+
+If the data is already in HDFS, then leave off the LOCAL keyword:
+			LOAD DATA INPATH '/user/train/customers.csv' OVERWRITE INTO TABLE customers;
+
+			In either case above, the file customers.csv is moved either into HDFS in a subfolder of /apps/hive/warehouse or to the table’s LOCATION folder,
+			and the contents of customers.csv are now associated with the customers table.
+####################
+INSERT
+####################		
+INSERT INTO TABLE birthdays
+   SELECT firstName, lastName, birthday
+   FROM customers
+   WHERE birthday IS NOT NULL;
+   
+   The birthdays table will contain all customers whose birthday column is not null.
+****************************************************************************************************************************************************************************************
+Performing Queries
+------------------
+Let’s take a look at some sample queries to demonstrate what HiveQL looks like. The following SELECT statement selects all records from the customers table:
+####################
+FROM
+####################
+SELECT * FROM customers;
+You can use the familiar WHERE clause to specify which rows to select from a table:
+FROM customers
+   SELECT firstName, lastName, address, zip
+   WHERE orderID > 0
+   ORDER BY zip;
+
+The FROM clause in Hive can appear before or after the SELECT clause.
+####################
+JOIN
+####################  
+SELECT customers.*, orders.*
+   FROM customers
+   JOIN orders ON (
+        customers.customerID = orders.customerID
+   );
+To perform an outer join, use the OUTER keyword:  
+   SELECT customers.*, orders.*
+   FROM customers
+   LEFT OUTER JOIN orders
+   ON (customers.customerID = orders.customerID);
+****************************************************************************************************************************************************************************************  
+Hive Partitions
+####################
+Hive manages the data in its tables using files in HDFS. You can define a table to have a partition, which results in the underlying data being stored in files partitioned by a specified column (or columns)
+ in the table. Partitioning the data can greatly improve the performance of queries because the data is already separated into files based on the column value, which can decrease the number of mappers and greatly decrease the amount of shuffling and sorting of data in the resulting MapReduce job.
+Use the partitioned by clause to define a partition when creating a table:
+create table employees (id int, name string, salary double) partitioned by (dept string);
+This will result in each department having its own subfolder in the underlying warehouse folder for the table:
+/apps/hive/warehouse/employees
+     /dept=hr/
+     /dept=support/
+     /dept=engineering/
+     /dept=training/
+Note : You can partition by multiple columns, which results in subfolders within the subfolders of the table’s warehouse directory.
+****************************************************************************************************************************************************************************************  
+HIVE Buckets
+####################
+Hive tables can be organized into buckets, which imposes extra structure on the table and the way the underlying files are stored. Bucketing has two key benefits:
+1) More efficient queries - Especially when performing joins on the same bucketed columns
+2) More efficient sampling	- Because the data is already split up into smaller pieces
+
+Buckets are created using the clustered by clause. For example, the following table has 16 buckets that are clustered by the id column:
+		create table employees (id int, name string, salary double) clustered by (id) into 16 buckets;
+		
+How does Hive determine which bucket to put a record into? If you have n buckets, the buckets are numbered 0 to n-1 and Hive hashes the column value and then uses the modulo operator on the hash value.
+****************************************************************************************************************************************************************************************
+Skewed Tables
+####################
+In Hive, skew refers to one or more columns in a table that have values that appear very often. If you know a column is going to have heavy skew, you can specify this in the table’s schema:
+CREATE TABLE Customers (
+    id int,
+    username string,
+    zip int
+)
+SKEWED BY (zip) ON (57701, 57702)
+STORED as DIRECTORIES;
+
+		By specifying the values with heavy skew, Hive will split those out into separate files automatically and take this fact into account during queries so that it can skip whole
+		files if possible.In the Customers table above, records with a zip of 57701 or 57702 will be stored in separate files because the assumption is that there will be a 
+		large number of customers in those two ZIP codes.
+****************************************************************************************************************************************************************************************
+Sorting Data
+####################
+HiveQL has two sorting clauses:
+	ORDER BY - A complete ordering of the data, which is accomplished by using a single reducer
+	SORT BY	-  Data output is sorted per reducer
+	
+	SYNTAX:- select * from table_name [order | sort] by column_name;
+
+The syntax for both is identical; only the behavior is different. If there is more than one reducer, sort by provides a partial sorting of the data by reducer but not a total ordering.
+Order by implements a total ordering across all reducers. To obtain a parallel total ordering across multiple reducers in Hive, you have to set the following property:
+hive.optimize.sampling.orderby=true
+If you do not set the property above then the total ordering is achieved by using one reducer. In that situation, you must add a LIMIT clause to the Hive query to limit the size of the output so that it 
+can be managed by a single reducer.	
+****************************************************************************************************************************************************************************************
+Using Distribute By	
+####################
+Hive uses the columns in distribute by to distribute the rows among reducers. In other words, all rows with the same distribute 
+by columns will go to the same reducer.
+For example, suppose you have the following table named salaries with the schema (gender, age, salary, zip):
+
+F6641000.095103
+M4076000.095102
+F5895000.095103
+F6860000.095105
+M8514000.095102
+...
+
+Note that distribute by is typically used in conjunction with an insert statement (or also when using Hadoop streaming with custom mappers and/or reducers). 
+The following command demonstrates distribute by on the age column
+
+set mapreduce.job.reduces=2;
+insert overwrite table mytable
+   select gender, age, salary from salaries
+   distribute by age;
+   
+Records with the same age will go to the same reducer. The distribute by does not guarantee any type of clustering of the records. For example, a reducer might get:  
+M,66,84000.0
+F,58,95000.0
+M,40,76000.0
+F,66,41000.0
+
+The two records with age = 66 are sent to the same reducer, but they are not adjacent. You can use sort by to cluster records with the same distribute by column together:
+insert overwrite table mytable
+   select gender, age, salary from salaries
+   distribute by age
+   sort by age;
+   
+The records with the same age will now appear together in the reducer’s output:
+F,58,95000.0
+M,66,84000.0
+F,66,41000.0
+M,68,15000.0
+F,68,60000.0
+M,72,83000.0
+
+####################
+cluster by Command
+####################
+If you use distribute by followed with a sort by on the same column, you can use cluster by and get the same result. 
+For example, the following statement has the same result as the previous Hive statement above:
+
+insert overwrite table myoutput_table
+   from dataset
+select * cluster by age;
+
+****************************************************************************************************************************************************************************************	 
+Storing Results to a File	
+############################
+1) The following command outputs the results of a query to a file in HDFS. For example:
+	INSERT OVERWRITE DIRECTORY '/user/train/ca_or_sd/' select name, state from names where state = 'CA' or state = 'SD';
+	
+2) You can also output the results of a query to a file on the local file system by adding the LOCAL keyword:
+    INSERT OVERWRITE LOCAL DIRECTORY '/tmp/myresults/' SELECT * FROM bucketnames ORDER BY age;
+	
+****************************************************************************************************************************************************************************************
+Specifying MapReduce Properties
+---------------------------------
+Keep in mind that a Hive query is actually a MapReduce job behind the scenes. You can specify some of the properties of that underlying MapReduce job in Hive using the SET command.
+1) You can either set the property in the Hive script:
+SET mapreduce.job.reduces = 12
+
+2) Or you can set properties at the command line using the hiveconf flag:
+hive -f myscript.hive -hiveconf mapreduce.job.reduces =12
+
+3) You can use hivevar for parameter substitution. For example:
+SELECT * FROM names WHERE age = ${age}
+
+Specify age using either SET or the hivevar flag:
+hive -f myscript.hive -hivevar age=33
+
+****************************************************************************************************************************************************************************************
+Hive Join Strategies
+Some important concepts to understand when performing joins and laying out your Hive data:
+Shuffle Join:-
+----------------
+A shuffle join is the default join technique for Hive, and it works with any data sets (no matter how large). 
+Identical keys are shuffled to the same reducer, and the join is performed on the reduce side. 
+This is the most expensive join from a network utilization standpoint because 
+all records from both sides of the join need to be processed by a mapper and then shuffled and sorted, 
+even the records that are not a part of the result set.
+
+MAP (Broad Cast JOIN):-
+--------------------------
+If one of the datasets is small enough to fit into memory, then it can be distributed (broadcast) to each mapper and perform 
+the join in the map phase. This greatly reduces the number of records being shuffled and sorted because only records that 
+appear in the result set will be passed on to a reducer.
+A map join has a special C-style comment syntax for providing a hint to the Hive engine:
+select /*+ MAPJOIN(states) */ customers.*, states.*
+from customers
+join states on (customers.state = states.state);
+Important
+In HDP 2.0, Hive joins are automatically optimized without the need for providing hints.
+
+SORT MERGE JOIN:-
+----------------------
+If you have two datasets that are too large for a map-side join, an efficient technique for joining them is to 
+sort the two datasets into buckets. The trick is to cluster and sort by the same join key.
+This provides two major optimization benefits:
+		1) Sorting by the join key makes joins easy. All possible matches reside in the same area on disk
+		2) Hash bucketing a join key ensures all matching values reside on the same node. Equi-joins can then run with no shuffle.
+
+		For this to work properly, the number of bucket columns has to equal the number of join columns. 
+		This means that, in general, you will need to specifically define your Hive tables to fit the requirements 
+		of a sort-merge-bucket join, which implies you are aware at design time of the columns that will be most commonly 
+		used in join statements.
+Note
+An SMB join can be converted to an SMB map join. This requires the following configuration settings enabled. 
+(Note that these settings are already set to true in HDP 2.0):
+hive.auto.convert.sortmerge.join=true;
+hive.optimize.bucketmapjoin = true;
+hive.optimize.bucketmapjoin.sortedmerge = true;
+hive.auto.convert.sortmerge.join.noconditionaltask = true;	
+****************************************************************************************************************************************************************************************
+Invoking a Hive UDF
+--------------------------
+Similar to Pig, Hive has the ability to use User-Defined Functions written in Java to perform computations that would 
+otherwise be difficult (or impossible) to perform using the built-in Hive functions and SQL commands.
+To invoke a UDF from within a Hive script, you need to:
+Register the JAR file that contains the UDF class and
+Define an alias for the function using the CREATE TEMPORARY FUNCTION command.
+For example, the following Hive commands demonstrate how to invoke the ComputeShipping UDF defined above:
+ADD JAR /myapp/lib/myhiveudfs.jar;
+CREATE TEMPORARY FUNCTION ComputeShipping
+  AS 'hiveudfs.ComputeShipping';
+FROM orders SELECT address, description, ComputeShipping(zip, weight);
+***************************************************************************************************************************************************************
+
+LABS
+
+Finding the 1st Visits using Whitehouse data populated by Pig
+---------------------------------------------------------------
+select * from wh_visits where time_of_arrival != "" 
+order by unix_timestamp(time_of_arrival,'MM/dd/yyyy hh:mm')
+limit 10;
+
+Find the Most Common Comment
+-----------------------------------
+from wh_visits select count(*) as comment_count, info_comment group by info_comment order by comment_count DESC limit 10;
+
+***************************************************************************************************************************************************************
+DEFINING Views
+--------------
+CREATE VIEW 2010_visitors AS
+    SELECT fname, lname, time_of_arrival, info_comment
+    FROM wh_visits
+    WHERE
+       cast(substring(time_of_arrival,6,4) AS int) >= 2010
+    AND
+       cast(substring(time_of_arrival,6,4) AS int) < 2011;
+	   
+USING Views
+--------------
+from 2010_visitors
+    select *
+    where info_comment like "%CONGRESS%"
+    order by lname;
+
+***************************************************************************************************************************************************************
+The TRANSFORM Clause
+--------------------
+You can write your own custom mappers or reducers and use them in Hive using the TRANSFORM clause. For example, the following example shows data being processed by 
+a Python script named splitwords.py in a SELECT clause and then that result being processed by countwords.py.
+
+add file splitwords.py;
+add file countwords.py;
+FROM (
+    FROM mytable
+    SELECT TRANSFORM(keywords) USING 'python splitwords.py'
+    AS word, count
+    CLUSTER BY word
+) wc
+INSERT OVERWRITE TABLE word_count
+SELECT TRANSFORM (wc.word, wc.count)
+USING 'python countwords.py'
+AS word, count;
+
+By default, columns will be transformed to STRING and delimited by a tab before being fed to the user script. The output of the script will be treated as tab-separated STRING columns.
+You can achieve a similar result using the MAP and REDUCE clauses:
+add file splitwords.py;
+add file countwords.py;
+FROM (
+    FROM mytable
+    MAP keywords USING 'python splitwords.py'
+    AS word, count
+    CLUSTER BY word
+) wc
+INSERT OVERWRITE TABLE word_count
+REDUCE wc.word, wc.count USING 'python countwords.py'
+AS word, count;
+
+Using MAP and REDUCE as an alias to SELECT TRANSFORM may not have the exact affect that you desire, since there is no guarantee that your specified script will be executed 
+during a map or reduce phase. The end result of your query will likely be the same, but MAP does not force a map phase, and REDUCE does not force a reduce phase.
+***************************************************************************************************************************************************************
+The OVER Clause
+--------------------
+Hive 0.11 introduced windowing capabilities to the Hive QL. Similar to an aggregate function (like GROUP BY), a window function performs a calculation across a set of table 
+rows that are somehow related, except that a window function does not cause rows to become grouped into a single output row; the rows retain their separate identities.
+This is best demonstrated by the OVER clause, as you can see in the result above. The GROUP BY statement finds the maximum price of each order, 
+and the results are aggregated into a single row for each unique cid.The OVER clause does not aggregate the result but instead maintains 
+each row of data and outputs the maximum price of the each cid group.
+
+select cid, max(price) over (partition by cid) from orders;
+***************************************************************************************************************************************************************
+Using Windows
+----------------
+The OVER clause allows you to define a window over which to perform a specific calculation. For example, the following Hive statement computes 
+the sum of each order, but the sum is not computed over all prices in an order. Instead, the sum is computed over a window that includes the current row and
+the two preceding rows, as ordered by the price column.
+ 
+SELECT cid, sum(price) OVER (PARTITION BY cid ORDER BY price ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM orders;
+
+Study the output carefully and see if you can verify that the result is what you expected based on the query.
+The FOLLOWING statement is used to specify rows after the current row:
+
+SELECT cid, sum(price) OVER (PARTITION BY cid ORDER BY price ROWS BETWEEN 2 PRECEDING AND 3 FOLLOWING) FROM orders;
+
+Use the UNBOUNDED statement to specify all prior or following rows:
+SELECT cid, sum(price) OVER (PARTITION BY cid ORDER BY price ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM orders;
+
+Hive window functions also include the LEAD and LAG functions for specifying the number of rows to lead ahead or lag behind in the window. Their usage is identical to SQL-92.
+
+***************************************************************************************************************************************************************
+Hive Analytics Functions
+--------------------------
+SELECT CID, QUANTITY, RANK()(OVER PARTITION BY CID ORDER BY QUANTITY) FROM ORDERS;
+
+RANK			Returns the rank of each row within the partition of a result set
+DENSE_RANK		Returns the rank of rows within the partition of a result set without any gaps in the ranking
+PERCENT_RANK	Calculates the relative rank of a row within a group of rows
+ROW_NUMBER		Returns the sequential number of a row within a partition of a result set
+CUME_DIST		Calculates the number of rows with values lower than or equal to the value of r, divided by the number of rows evaluated 
+				in the partition for a row r 
+NTILE			Distributes the rows in an ordered partition into a specified number of groups. For each row, NTILE returns the number of the group to which the row belongs
+
+***************************************************************************************************************************************************************
+Hive File Formats
+--------------------------
+As you have seen, Hive does not store data. The data for a table is stored in HDFS in one of the following formats:
+
+Text file		Comma, tab, or other delimited file types
+SequenceFile	Serialized key/value pairs that can quickly be deserialized in Hadoop
+RCFile			A record columnar file that organizes data by columns (as opposed to the traditional database row format)
+ORC File		The optimized row columnar format that improves the efficiency of Hive by a considerable amount (discussed in more detail in the 
+next section)
+
+CREATE TABLE names
+  (fname string, lname string)
+STORED AS RCFile;
+
+***************************************************************************************************************************************************************
+Hive SerDes
+--------------
+SerDe is short for serializer/deserializer and refers to how records read in from a table (deserialized) and written back out to HDFS (serialized). 
+Records can be stored in any custom format you want by writing Java classes, or you can use one of the several built-in SerDes, including:
+AvroSerDe		For reading and writing files using an Avro schema
+RegexSerDe		For using a regular expression to deserialize data
+ColumnarSerDe	For columnar-based storage supported by RCFiles
+OrcSerDe		For reading and writing to ORC files
+
+There are quite a few built-in SerDes, so check the documentation for a complete list.
+
+There are third-party SerDes available as well, so do a search online before attempting to develop a custom SerDe that might already be available.
+Using SerDes requires the ROW FORMAT SERDE clause. For example, the following table is for data stored in the Avro format
+
+CREATE TABLE emails (
+   from_field string,
+   sender string,
+   email_body string)
+   ROW FORMAT SERDE
+   'org.apache.hadoop.hive.serde2.avro.AvroSerDe'
+   STORED AS
+    INPUTFORMAT
+         
+'org.apache.hadoop.hive.ql.io.avro.AvroContainerInputFormat'
+    OUTPUTFORMAT  
+'org.apache.hadoop.hive.ql.io.avro.AvroContainerOutputFormat'
+    TBLPROPERTIES (
+'avro.schema.url'='hdfs//nn:8020/emailschema.avsc');
+
+
+***************************************************************************************************************************************************************
+Hive ORC Files
+------------------
+The Optimized Row Columnar (ORC) file format provides a highly efficient way to store Hive data. It was designed to overcome limitations of the other 
+Hive file formats. Using ORC files improves performance when Hive is reading, writing, and processing data.
+File formats in Hive are specified at the table level. Use the AS keyword and specify the ORC file format:
+
+CREATE TABLE tablename (
+...
+) AS ORC;
+
+You can also modify the file format of an existing table:
+ALTER TABLE tablename SET FILEFORMAT ORC;
+
+And you can specify ORC as the default file format of new tables:
+SET hive.default.fileformat=Orc
+
+ORC files have three main components:
+	1) Stripe
+	2) Footer
+	3) Postscript
+
+Here are the features of these components:
+	An ORC file is broken down into sets of rows called stripes
+	The default stripe size is 250 MB. Large stripe sizes enable efficient reads of columns
+	An ORC file contains a footer that contains the list of stripe locations
+	The footer also contains column data like the count, min, max, and sum
+	At the end of the file, the postscript holds compression parameters and the size of the compressed footer
+***************************************************************************************************************************************************************	
+Computing Table Statistics
+----------------------------
+Hive can store table and partition statistics in its metastore. There are two types of table statistics currently supported by Hive:
+
+1) Table and partition statistics	Number of rows, number of files, raw data size, and number of partitions
+2) Column Level Top K statistics	Number of null values, number of true/false values, maximum and minimum values, 
+								estimate of number of distinct values, average column length, maximum column length, and height balanced histograms
+								
+Important
+Column statistics are computed using the top K algorithm, hence the name Top K statistics. Column statistics is still a work in progress 
+xand has not been included in the current stable release of Hive.
+
+The ANALYZE TABLE command gathers statistics for a table, a partition, and columns and writes them to the Hive metastore. To compute table statistics, 
+the syntax looks like:
+ANALYZE TABLE tablename COMPUTE STATISTICS;
+
+For computing stats on partitions, use the PARTITION command:
+ANALYZE TABLE tablename PARTITION(part1, part2,..) COMPUTE STATISTICS
+
+The ANALYZE command runs a MapReduce job that processes the entire table. The table and partition stats are outputed to the command window:
+Table default.customers stats: [num_partitions: 0, num_files: 11, num_rows: 891048, total_size: 4605775, raw_data_size: 0]
+
+You can also view these stats for a table by running the DESCRIBE command:
+DESCRIBE FORMATTED tablename
+DESCRIBE EXTENDED tablename
+
+You can also specify one or more partitions to view details for at the partition level:
+DESCRIBE EXTENDED tablename PARTITION(part1=value1, part2=value2);
+***************************************************************************************************************************************************************	
+Hive Cost Based Optimization
+-------------------------------
+In the first phase of Optiq and CBO in Hive, Optiq is used to reorder joins and to pick the right join algorithm to reduce query latency. 
+Table cardinality and boundary statistics are used for this cost-based optimization.
+Suppose you want to use CBO on a table named tweets that has columns named sender and topic that are commonly used in your Hive JOIN queries. 
+
+First you need to analyze the table:
+	analyze table tweets compute statistics;
+
+Second, compute the column statistics for sender and topic:
+
+	analyze table tweets compute statistics  for columns sender, topic;
+
+Third, set the following properties to enable CBO:
+	set hive.compute.query.using.stats=true;
+	set hive.cbo.enable=true;
+	set hive.stats.fetch.column.stats=true;
+
+***************************************************************************************************************************************************************	
+Vectorization
+--------------
+Vectorization is a new feature that allows Hive to process a batch of up to 1,024 rows together instead of processing one row at a time. 
+Each batch consists of a column vector, which is usually an array of primitive types. Operations are performed on the entire column vector, improving 
+the instruction pipelines and cache usage.
+	To take advantage of vectorization, your table needs to be in the ORC format and you need to enable vectorization with the following property:
+	hive.vectorized.execution.enabled=true
+
+When vectorization is enabled, Hive examines the query and the data to determine whether vectorization can be supported. 
+If it cannot be supported, Hive will execute the query with vectorization turned off.
+
+Vectorization is a joint effort between Hortonworks and Microsoft. The improvements from vectorization, in addition to the new ORC file format, 
+have helped increase the speed of Hive queries by a magnitude.
+
+
+***************************************************************************************************************************************************************	
+Using HiveServer2
+--------------------
+As we discussed earlier, Hive queries are submitted to a HiveServer process. Older versions of Hive used the hiveserver process, 
+which can only process one request at a time. HDP 2.0 ships with HiveServer2,
+a Thrift-based implementation that allows multiple concurrent connections and also supports Kerberos authentication.
+A new HiveServer2 instance is started with the hiveserver2 binary, or it can be run as a service
+Settings are defined in hive-site.xml, except for the bind host and port, which can be defined using the 
+HIVE_SERVER2_THRIFT_BIND_HOST and HIVE_SERVER2_THRIFT_PORT environment variables. 
+This allows you to run multiple HiveServer2 instances on the same machine.
+
+For example:
+set HIVE_SERVER2_THRIFT_PORT=12345
+hive --service hiveserver2
+The above command runs a hiveserver2 instance on port 12345.
+***************************************************************************************************************************************************************	
+Understanding Hive on Tez
+--------------------------------
+
+Tez provides a general-purpose, highly customizable framework that simplifies data-processing tasks across both 
+small-scale (low-latency) and large-scale (high-throughput) workloads in Hadoop. It generalizes the MapReduce paradigm to a more powerful framework 
+by providing the ability to execute a complex DAG of tasks for a single job.
+As you can see in the diagram above, a Hive query without Tez can consist of multiple MapReduce jobs. 
+Tez performs a Hive query in a single job, avoiding the intermediate writes to disk that were a result of the multiple MapReduce jobs.
+
+Using Tez for Hive Queries
+---------------------------
+To use Tez for a Hive query, you need to define the following property in your Hive script or in hive-site.xml:
+set hive.execution.engine=tez;
+Note that this property is set to mr by default.
+To specify the job queue, use the tez.queue.name property.
+
+Hive Optimization Tips
+-------------------------
+
+		Divide data amongst different files that can be pruned out by using partitions, buckets, and skews
+		Use the ORC file format
+		Sort and Bucket on common join keys
+		Use map (broadcast) joins whenever possible
+		Increase the replication factor for hot data (which reduces latency)
+		Take advantage of Tez
+
+		Above are some helpful design tips for improving the speed of Hive queries.
+
+Hive has a special file called the .hiverc file that gets executed each time you launch a Hive shell. 
+This makes the .hiverc file a great place for adding custom configuration settings that you use all the time or for loading JAR files that contain 
+frequently used UDFs. The file is saved in the Hive conf directory, which is /etc/hive/conf for an HDP installation.
+
+Hive Query Tunings
+-------------------------
+Hive has a lot of parameters that can be set globally in hive-site.xml or at the script level using the set command.
+Here are some of the more important parameters to improve the performance of your Hive queries:
+
+
+mapreduce.input.fileinputformat.split.maxsize and mapreduce.input.fileinputformat.split.minsize	
+	If the min is too large, you will have too few mappers; if the max is too small, you will have too many mappers
+
+mapreduce.tasks.io.sort.mb	Increase this value to avoid disk spills
+******************************************
+Always set the following properties:
+********************************************
+	hive.optimize.mapjoin.mapreduce=true;
+	hive.optimize.bucketmapjoin=true;
+	hive.optimize.bucketmapjoin.sortedmerge=true;
+	hive.auto.convert.join=true;
+	hive.auto.convert.sortmerge.join=true;
+	hive.auto.convert.sortmerge.join.noconditionaltask=true;
+****************
+Important
+********************	
+In HDP, these values are set to true by default. You can verify by viewing the properties in hive-site.xml. 
+If a property is not set, just use the set command in your Hive script. For example:
+set hive.optimize.mapjoin.mapreduce=true;
+
+***************************************************************************************************************************************************************	
+***************************************************************************************************************************************************************	
+***************************************************************************************************************************************************************	
+LAB-LAB-LAB-LAB-LABLAB-LAB-LAB-LAB-LABLAB-LAB-LAB-LAB-LABLAB-LAB-LAB-LAB-LABLAB-LAB-LAB-LAB-LABLAB-LAB-LAB-LAB-LABLAB-LAB-LAB-LAB-LABLAB-LAB-LAB-LAB-LABLAB-LAB
+***************************************************************************************************************************************************************	
+***************************************************************************************************************************************************************	
+***************************************************************************************************************************************************************	
+To learn how to configure Hive queries for Tez, create a table that uses the ORC file format, enable vectorization for a query, 
+and use cost-based optimization on a query.
+1) 
+# cd ~/devph/labs/demos/SensorFiles/
+# more building.csv
+# more HVAC.csv
+--press q to exit more
+@Anand-------- Open the File to see what is the content
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+[root@sandbox SensorFiles]# more create_hive_tables.sql
+drop table if exists hvac;
+
+-- Date,Time,TargetTemp,ActualTemp,System,SystemAge,BuildingID
+create table hvac (date string, time string, targettemp int, actualtemp int, sys
+tem int, systemage int, buildingid int) row format delimited fields terminated b
+y ',' stored as TEXTFILE;
+
+load data local inpath 'HVAC.csv' into table hvac; 
+
+drop table if exists building;
+
+-- BuildingID,BuildingMgr,BuildingAge,HVACproduct,Country
+create table building (buildingid int, buildingmgr string, buildingage int, hvac
+product string, country string) row format delimited fields terminated by ',' 
+stored as TEXTFILE;
+
+load data local inpath 'building.csv' into table building;
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+@Anand-------- Now run the JOB
+hive -f create_hive_tables.sql
+
+# hive
+hive> select * from building;
+hive> select * from hvac limit 20;
+
+2) Run a Query using MapReduce
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+[root@sandbox SensorFiles]# more run_demo_mr.sql
+set hive.execution.engine=mr;
+
+select h.*, b.country, b.hvacproduct, b.buildingage, b.buildingmgr 
+from building b join hvac h 
+on b.buildingid = h.buildingid;
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+hive -f run_demo_mr.sql
+------------------------------
+3) Run the Query using Tez
+a.	
+Use more to view the contents of run_demo_tez.sql:
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+# more run_demo_tez.sql
+set hive.execution.engine=tez;
+select h.*, b.country, b.hvacproduct, b.buildingage, b.buildingmgr
+from building b join hvac h
+on b.buildingid = h.buildingid;
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+hive -f run_demo_tez.sql
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+4) Create an ORC Table
+
+create table hvac_orc stored as orc as select * from hvac;
+
+hive> describe formatted hvac_orc;
+hive> select * from hvac_orc limit 20;
+---------------------------------------------------------------------------------------------------------------------------------------------
+5) Run a Query with Vectorization
+hive> set hive.execution.engine=tez;
+hive> set hive.vectorized.execution.enabled=false;
+hive> select date, count(buildingid) from hvac group by date;
+hive> select date, count(buildingid) from hvac_orc group by date;
+hive> select date, count(buildingid) from hvac_orc group by date;
+hive> explain select date, count(buildingid) from hvac_orc group by date;
+hive> explain select date, count(buildingid) from hvac_orc group by date;
+OK
+STAGE DEPENDENCIES:
+  Stage-1 is a root stage
+  Stage-0 depends on stages: Stage-1
+
+STAGE PLANS:
+  Stage: Stage-1
+    Tez
+      Edges:
+        Reducer 2 <- Map 1 (SIMPLE_EDGE)
+      DagName: root_20150719223333_ae6fadb4-531e-4356-8053-8efcda0da648:8
+      Vertices:
+        Map 1 
+            Map Operator Tree:
+                TableScan
+                  alias: hvac_orc
+                  Statistics: Num rows: 8000 Data size: 1608000 Basic stats: COMPLETE Column stats: NONE
+                  Select Operator
+                    expressions: date (type: string), buildingid (type: int)
+                    outputColumnNames: date, buildingid
+                    Statistics: Num rows: 8000 Data size: 1608000 Basic stats: COMPLETE Column stats: NONE
+                    Group By Operator
+                      aggregations: count(buildingid)
+                      keys: date (type: string)
+                      mode: hash
+                      outputColumnNames: _col0, _col1
+                      Statistics: Num rows: 8000 Data size: 1608000 Basic stats: COMPLETE Column stats: NONE
+                      Reduce Output Operator
+                        key expressions: _col0 (type: string)
+                        sort order: +
+                        Map-reduce partition columns: _col0 (type: string)
+                        Statistics: Num rows: 8000 Data size: 1608000 Basic stats: COMPLETE Column stats: NONE
+                        value expressions: _col1 (type: bigint)
+            Execution mode: vectorized
+        Reducer 2 
+            Reduce Operator Tree:
+              Group By Operator
+                aggregations: count(VALUE._col0)
+                keys: KEY._col0 (type: string)
+                mode: mergepartial
+                outputColumnNames: _col0, _col1
+                Statistics: Num rows: 4000 Data size: 804000 Basic stats: COMPLETE Column stats: NONE
+                Select Operator
+                  expressions: _col0 (type: string), _col1 (type: bigint)
+                  outputColumnNames: _col0, _col1
+                  Statistics: Num rows: 4000 Data size: 804000 Basic stats: COMPLETE Column stats: NONE
+                  File Output Operator
+                    compressed: false
+                    Statistics: Num rows: 4000 Data size: 804000 Basic stats: COMPLETE Column stats: NONE
+                    table:
+                        input format: org.apache.hadoop.mapred.TextInputFormat
+                        output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                        serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
+
+  Stage: Stage-0
+    Fetch Operator
+      limit: -1
+      Processor Tree:
+        ListSink
+
+Time taken: 0.135 seconds, Fetched: 59 row(s)
+hive> 
+The following commands can be found in run_demo_cbo.sql file located in the ~/devph/labs/demos/SensorFiles folder. You can open them in gedit and then copy and paste these into the Hive shell:
+set hive.compute.query.using.stats=true;
+set hive.cbo.enable=true;
+set hive.stats.fetch.column.stats=true;
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+Advance HIVE Programming
+----------------------------
+1) Create and Populate a Hive Table
+-----------------------------------------
+cd ~/devph/labs/Lab9.1
+more orders.hive
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+drop table if exists orders;
+
+create table orders (
+ OrderId int,
+ order_date string,
+ UserId int,
+ UserName string,
+ Gender string,
+ OrderTotal int,
+ itemlist string
+) 
+row format delimited
+fields terminated by '\t';
+
+load data local inpath 'shop.tsv' overwrite into table orders;
+
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+hive -f orders.hive
+from the hive shell verify# hive
+hive> describe orders;
+hive> set hive.execution.engine=tez;
+hive> select count(*) from orders;
+Your orders table should contain 99,999 records. 
+------------------------------------------------------------------------------------------
+2) Analyze the Customer Data
+------------------------------------------------------------------------------------------
+hive> SELECT username FROM orders LIMIT 10;
+---Run the following query, that shows the 10 lowest-price orders:
+hive> SELECT username, ordertotal FROM orders ORDER BY ordertotal LIMIT 10;
+
+---10 highest-priced orders:
+hive> SELECT username, ordertotal FROM orders ORDER BY ordertotal DESC LIMIT 10;
+
+--- find out if men or women spent more money:
+hive> SELECT sum(ordertotal), gender FROM orders GROUP BY gender;
+
+---The orderdate column is a string with the format yyyy-mm-dd. Use the year function
+	to extract the various parts of the date. For example, run the following query, which computes the
+	sum of all orders for each year
+hive> SELECT sum(ordertotal), year(order_date) FROM orders GROUP BY year(order_date);
+
+------------------------------------------------------------------------------------------
+3) Multi-File Insert	
+------------------------------------------------------------------------------------------
+cd /root/devph/labs/Lab9.1 
+more multifile.hive
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+[root@sandbox Solution]# more multifile.hive
+FROM ORDERS 
+INSERT OVERWRITE DIRECTORY '2010_orders' SELECT o.* WHERE substr(order_date,0,4) = '2010'
+INSERT OVERWRITE DIRECTORY 'software' SELECT o.* WHERE itemlist LIKE '%Software%';
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+FROM ORDERS o
+INSERT OVERWRITE DIRECTORY '2010_orders'
+SELECT o.* WHERE year(order_date) = 2010
+INSERT OVERWRITE DIRECTORY 'software'
+SELECT o.* WHERE itemlist LIKE '%Software%';
+hadoop fs -ls
+------------------------------------------------------------------------------------------------------------
+4) Define a View
+-----------------------------------------------------------------------------------------------------------
+Start the Hive shell. Define a view named 2013_orders that contains the orderid, order_date, username, and itemlist columns of the orders table where the order_date was in the year 2013.
+Solution: The 2013_orders view:
+# hive
+hive> CREATE VIEW 2013_orders AS
+SELECT orderid, order_date, username, itemlist
+FROM orders
+WHERE year(order_date) = '2013';
+Run the show tables command:
+hive> show tables;
+The 2013_orders view should contain 13,104 records.
+Find the Maximum Order of Each Customer
+-------------------------------------------------------------------------------------------------------------
+5) Find the Maximum Order of Each Customer
+-------------------------------------------------------------------------------------------------------------
+Suppose you want to find the maximum order of each customer. This can be done easily enough with the following Hive query. Run this query now:
+hive> SELECT max(ordertotal), userid
+FROM orders GROUP BY userid;
+Suppose you want to add the itemlist column to the previous query. Try adding it to the SELECT clause by the following method and see what happens:
+NOT VALID QUERY - hive> SELECT max(ordertotal), userid, itemlist
+FROM orders GROUP BY userid;
+
+We can join the result set of the max-total query with the orders table to add the itemlist to our result. Start by defining a view named max_ordertotal for the maximum order of each customer:
+hive> CREATE VIEW max_ordertotal AS
+SELECT max(ordertotal) AS maxtotal, userid
+FROM orders GROUP BY userid;
+
+Now join the orders table with your max_ordertotal view:
+hive> SELECT ordertotal, orders.userid, itemlist
+FROM orders
+JOIN max_ordertotal ON
+max_ordertotal.userid = orders.userid
+AND
+max_ordertotal.maxtotal = orders.ordertotal
+ORDER BY orders.userid;
+-----------------------------------------------------------------------------------------------------
+6) Fixing the GROUP BY Key Error
+-----------------------------------------------------------------------------------------------------
+
+Let’s compute the sum of all of the orders of all of the customers. Start by entering the following query:
+hive> SELECT sum(ordertotal), userid FROM orders GROUP BY userid;
+Notice that the output is the sum of all orders, but displaying just the userid is not very exciting.
+
+Try to add the username column to the SELECT clause in the following manner and see what happens:
+hive> SELECT sum(ordertotal), userid, username
+FROM orders
+GROUP BY userid;
+This generates the infamous “Expression not in GROUP BY key” error, because the username column is not being aggregated but the ordertotal is.
+c.	
+An easy fix is to aggregate the username values using the collect_set function, but output only one of them:
+hive> SELECT sum(ordertotal), userid, collect_set(username)[0] FROM orders
+GROUP BY userid;
+You should get the same output as before, but this time the username is included.	
+-----------------------------------------------------------------------------------------------------
+7) Using the OVER Clause
+-----------------------------------------------------------------------------------------------------
+a.	
+Now let’s compute the sum of all orders for each customer, but this time use the OVER clause to not group the output and to also display the itemlist column:
+
+hive> SELECT userid, itemlist, sum(ordertotal)
+OVER (PARTITION BY userid)
+FROM orders;
+
+-----------------------------------------------------------------------------------------------------
+8) Using the Window Functions
+-----------------------------------------------------------------------------------------------------
+It is not difficult to compute the sum of all orders for each day using the GROUP BY clause:
+hive> select order_date, sum(ordertotal)
+FROM orders
+GROUP BY order_date;
+Run the query above and the tail of the output should look like:
+2013-07-2818362
+2013-07-293233
+2013-07-304468
+2013-07-314714
+Suppose you want to compute the sum for each day that includes each order. This can be done using a window that sums all previous orders along with the current row:
+hive> SELECT order_date, sum(ordertotal)
+OVER
+(PARTITION BY order_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+FROM orders;
+To verify that it worked, your tail of your output should look like:
+2013-07-313163
+2013-07-313415
+2013-07-313607
+2013-07-314146
+2013-07-314470
+2013-07-314610
+2013-07-314714
+
+-----------------------------------------------------------------------------------------------------
+9) Using the Hive Analytics Functions
+-----------------------------------------------------------------------------------------------------
+a.	Run the following query, which displays the rank of the ordertotal by day:
+hive> SELECT order_date, ordertotal, rank()
+OVER
+(PARTITION BY order_date ORDER BY ordertotal)
+FROM orders;
+
+b. To verify it worked, the output of July 31, 2013, should look like:
+2013-07-31481
+2013-07-311042
+2013-07-311193
+2013-07-311304
+2013-07-311335
+2013-07-311356
+2013-07-311407
+2013-07-311478
+2013-07-311569
+2013-07-3119210
+2013-07-3119210
+2013-07-3119612
+2013-07-3124013
+2013-07-3125214
+2013-07-3129615
+2013-07-3132416
+2013-07-3134317
+2013-07-3150018
+2013-07-3152819
+2013-07-3153920
+
+c. As a challenge, see if you can run a query similar to the previous one except compute the rank over months instead of each day.
+Solution: The rank query by month:
+SELECT substr(order_date,0,7), ordertotal, rank()
+OVER
+(PARTITION BY substr(order_date,0,7) ORDER BY ordertotal)
+FROM orders;
+
+-----------------------------------------------------------------------------------------------------
+10) Using the Hive Analytics Functions
+-----------------------------------------------------------------------------------------------------
+
+a.Run the following Hive query, which uses the histogram_numeric function to compute 20 (x,y) pairs of the frequency distribution of the total order amount from customers who purchased a microwave (using the orders table):
+hive> SELECT explode(histogram_numeric(ordertotal,20)) AS x
+     FROM orders
+     WHERE itemlist LIKE "%Microwave%";
+	 The output should look like the following:
+{"x":14.333333333333332,"y":3.0}
+{"x":33.87755102040816,"y":441.0}
+{"x":62.52577319587637,"y":679.0}
+{"x":89.37823834196874,"y":965.0}
+{"x":115.1242236024843,"y":1127.0}
+{"x":142.6468885672939,"y":1382.0}
+{"x":174.07664233576656,"y":1370.0}
+{"x":208.06909090909105,"y":1375.0}
+{"x":242.55486381322928,"y":1285.0}
+{"x":275.8625954198475,"y":1048.0}
+{"x":304.71100917431284,"y":872.0}
+{"x":333.1514423076924,"y":832.0}
+{"x":363.7630208333335,"y":768.0}
+{"x":397.51587301587364,"y":756.0}
+{"x":430.9072847682117,"y":604.0}
+{"x":461.68715083798895,"y":537.0}
+{"x":494.1598360655734,"y":488.0}
+{"x":528.5816326530613,"y":294.0}
+{"x":555.5166666666672,"y":180.0}
+{"x":588.7979797979801,"y":198.0}
+b.	
+Write a similar Hive query that computes 10 frequency-distribution pairs for the ordertotal from the orders table where ordertotal is greater than $200.
+SELECT explode(histogram_numeric(ordertotal,10)) AS x   
+FROM orders                                    
+WHERE ordertotal > 200;
+{"x":218.8195174551819,"y":7419.0}
+{"x":254.10237580993478,"y":6945.0}
+{"x":293.4231618807192,"y":6338.0}
+{"x":334.57302573203015,"y":5635.0}
+{"x":379.79714934930786,"y":4841.0}
+{"x":428.1165628891644,"y":4015.0}
+{"x":473.1484734420741,"y":2391.0}
+{"x":511.2576946288467,"y":1657.0}
+{"x":549.0106899902812,"y":1029.0}
+{"x":589.0761194029857,"y":670.0}
+
+Result: 
+You should now be comfortable running Hive queries and using some of the more advanced features of Hive, like views and the window functions
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+MORE Queries.txt
+SELECT username, ordertotal FROM orders ORDER BY ordertotal DESC LIMIT 10;
+
+SELECT sum(ordertotal), gender FROM orders GROUP BY gender;
+
+SELECT sum(ordertotal), substr(order_date,0,4) FROM orders GROUP BY substr(order_date,0,4);
+
+SELECT max(ordertotal), userid FROM orders GROUP BY userid;
+
+SELECT max(ordertotal), userid, itemlist FROM orders GROUP BY userid;
+
+CREATE VIEW max_ordertotal AS SELECT max(ordertotal) AS maxtotal, userid FROM orders GROUP BY userid;
+
+SELECT ordertotal, orders.userid, itemlist FROM orders JOIN max_ordertotal ON max_ordertotal.userid = orders.userid AND 
+max_ordertotal.maxtotal = orders.ordertotal;
+
+SELECT sum(ordertotal), userid FROM orders GROUP BY userid;
+
+SELECT sum(ordertotal), userid, username FROM orders GROUP BY userid;
+
+SELECT sum(ordertotal), userid, collect_set(username)[0] FROM orders GROUP BY userid;
+
+SELECT userid, itemlist, sum(ordertotal) OVER (PARTITION BY userid) FROM orders;
+select order_date, sum(ordertotal) FROM orders GROUP BY order_date;
+
+SELECT order_date, sum(ordertotal) OVER (PARTITION BY order_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM orders;
+
+SELECT order_date, ordertotal, rank() OVER (PARTITION BY order_date ORDER BY ordertotal) FROM orders;
+
+CREATE VIEW 2013_orders AS SELECT orderid, order_date, username, itemlist FROM orders WHERE substr(order_date,0,4) = '2013';
+
+
+select substr(order_date,0,7), ordertotal, rank() OVER (PARTITION BY substr(order_date,0,7) ORDER BY ordertotal) FROM orders;
+
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+
